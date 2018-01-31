@@ -1,4 +1,5 @@
 #include "jpegencoder.h"
+#include "streamconfig.h"
 
 JpegEncoder::JpegEncoder()
 :encoder()
@@ -7,6 +8,7 @@ JpegEncoder::JpegEncoder()
 }
 
 JpegEncoder::~JpegEncoder(){
+    qDebug() << "JpegEncoder::~JpegEncoder()";
     closeEncoder();
 }
 
@@ -21,8 +23,9 @@ bool JpegEncoder::init(){
 
 bool JpegEncoder::encode(AVFrame *frame, AVPacket *pkt){
     int ret, got_packet = 0;
-
+    //qDebug() << "JpegEncoder::encode 111111111111";
     ret = avcodec_encode_video2(mCodecCtx, pkt, frame, &got_packet);
+    //qDebug() << "JpegEncoder::encode 22222222222222";
     if(ret < 0) {
         qDebug() << "avcodec_encode_video2 fail.";
         return false;
@@ -58,8 +61,8 @@ bool JpegEncoder::openEncoder(){
 
 
     /* resolution must be a multiple of two */
-    mCodecCtx->width = DEFAULT_ENCODE_WIDTH;
-    mCodecCtx->height = DEFAULT_ENCODE_HEIGHT;
+    mCodecCtx->width = StreamConfig::video_encode_width_val();//DEFAULT_ENCODE_WIDTH;
+    mCodecCtx->height = StreamConfig::video_encode_height_val();//DEFAULT_ENCODE_HEIGHT;
     AVRational timeBase = {1, 30};
     mCodecCtx->time_base = timeBase;
     mCodecCtx->pix_fmt = DEFAULT_ENCODE_FORMAT;

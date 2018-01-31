@@ -4,8 +4,8 @@
 #include "encoder.h"
 
 #define DEFAULT_ENCODE_NAME "mjpeg"
-#define DEFAULT_ENCODE_WIDTH 352
-#define DEFAULT_ENCODE_HEIGHT 288
+//#define DEFAULT_ENCODE_WIDTH 352
+//#define DEFAULT_ENCODE_HEIGHT 288
 #define DEFAULT_ENCODE_FORMAT AV_PIX_FMT_YUVJ420P
 class JpegEncoder : public encoder
 {

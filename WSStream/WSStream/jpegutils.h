@@ -14,7 +14,7 @@ public:
     JpegUtils();
     ~JpegUtils();
 
-    virtual bool init();
+    virtual bool init(bool isMaster);
     virtual bool openStream();
     virtual bool closeStream();
     virtual bool writeOneFrameToStream(AVFrame *frame, enum AVMediaType codec_type, int *err_code);

@@ -1,24 +1,37 @@
 #include "wsstreammanager.h"
 #include <QThread>
 #include <QDateTime>
-
+#include <QMutexLocker>
 
 
 WSStreamManager::WSStreamManager(QObject *parent) : QObject(parent)
 ,mFfmpegManager(this)
 {
-    init();
+     mInputStream = NULL;
+     mOutputStream = NULL;
+     mOutputStream1 = NULL;
+     videoCrop = NULL;
+     videoCapThread = NULL;
+     init();
 }
 
 WSStreamManager::~WSStreamManager() {
     qDebug() << "WSStreamManager::~WSStreamManager";
     if(mInputStream)
-        delete mInputStream;
-    if(mInputStream1)
-        delete mInputStream1;
+        mInputStream->deleteLater();
 
+     qDebug() << "WSStreamManager::~WSStreamManager1";
     if(mOutputStream)
-        delete mOutputStream;
+        mOutputStream->deleteLater();
+     qDebug() << "WSStreamManager::~WSStreamManager2";
+    if(mOutputStream1)
+        mOutputStream1->deleteLater();
+     qDebug() << "WSStreamManager::~WSStreamManager3";
+    if(videoCapThread) {
+        //videoCapThread->exit();
+        videoCapThread->deleteLater();
+    }
+     qDebug() << "WSStreamManager::~WSStreamManager4";
 }
 
 void WSStreamManager::init() {
@@ -28,32 +41,30 @@ void WSStreamManager::init() {
     if(!mInputStream)
         return;
 
-
-
-    mInputStream1 = new AudioInputStream();
-    if(!mInputStream1)
-        return;
-
-
-
     mOutputStream = new MultiAVStream();
     if(!mOutputStream)
+        return;
+
+    mOutputStream1 = new MultiAVStream();
+    if(!mOutputStream1)
         return;
 
     videoCapThread = new VideoCaptureThread();
     if(!videoCapThread)
         return;
 
-    //qDebug() << "WSStreamManager::init : " << QThread::currentThreadId();
 }
 
 void WSStreamManager::start() {
      qDebug() << "WSStreamManager::start";
      bool ret = true;
-     AVFrame *output_frame = NULL, *audioFrame = NULL;
+     int rc = 0;
      QMutex dshowLock;
+     AVFrame *frame = NULL;
 
-     if(!mInputStream || !mInputStream1 || !mOutputStream)
+     unsigned char *out_buffer = NULL;
+
+     if(!mInputStream || !mOutputStream || !mOutputStream1)
          return;
 
      //初始化视频输入
@@ -63,111 +74,79 @@ void WSStreamManager::start() {
      if(!ret)
          return;
 
-     //初始化音频输入
-     mInputStream1->setDeviceLock(&dshowLock);
-     ret = mInputStream1->init();
-     qDebug() << "mInputStream1 init " << ret;
-     if(!ret)
-         return;
-
-     while(1) {
+     while(true) {
          //初始化输出
-         ret = mOutputStream->init();
+         ret = mOutputStream->init(false);
          if(ret)
              break;
-    }
-
-     //初始化音频Fifo
-     ret = mInputStream1->initFifo(mOutputStream->getAudioCodec()->getCodecContex());
-     if(!ret){
-         qDebug() << "initFifo fail.";
-         return;
+         qDebug() << "need exit";
+         mOutputStream->closeStream();
      }
 
-    //写输出格式头部信息
-    /* ret = mOutputStream->writeHeaderToStream();
-     if(!ret)
-         return;*/
-
-     const int output_frame_size = mOutputStream->getAudioCodec()->getCodecContex()->frame_size;
-
-     videoCapThread->setInputStream(mInputStream);
-     videoCapThread->setOutputStream(mOutputStream);
+     videoCapThread->setOutputStream(mOutputStream1);
+     videoCapThread->setFrameListAndLock(&frameList, &listLock);
      videoCapThread->start();
 
-     while(false){
-         audioFrame = av_frame_alloc();
-        // qDebug() << "test run";
-         av_frame_free(&audioFrame);
-         QThread::sleep(1);
+     frame = av_frame_alloc();
+     if(frame == NULL){
+         qDebug() << "VideoCaptureThread frame == NULL";
+         return;
      }
-    // audioFrame = av_frame_alloc();
-    // output_frame = av_frame_alloc();
+     out_buffer = (unsigned char *)av_malloc(avpicture_get_size(AV_PIX_FMT_YUV420P, StreamConfig::video_crop_width_val(), StreamConfig::video_crop_height_val()));
+     if(!out_buffer){
+         qDebug() << "out_buffer == NULL";
+     }
+     rc = avpicture_fill((AVPicture *)frame, out_buffer, AV_PIX_FMT_YUV420P, StreamConfig::video_crop_width_val(), StreamConfig::video_crop_height_val());
+     if(rc < 0){
+          qDebug() << "avpicture_fill fail";
+     }
 
      while(true){
-         audioFrame = av_frame_alloc();
-         if(!audioFrame){
-             qDebug() << "memoer low audioFrame == NULL";
-             continue;
-         }
-         qDebug() <<"mInputStream1 11";
-#if 1
-        while(mInputStream1->getFifoSize() < output_frame_size) {
-            qDebug() <<"mInputStream1 22";
-            ret = mInputStream1->getOneFrameFromStream(audioFrame);
-            if(!ret){
-                qDebug() << "mInputStream1 getOneFrameFromStream fail.";
-                //goto end;
-                break;
-            }
-            qDebug() <<"mInputStream1 33";
-            ret = mInputStream1->addSampleToFifo(audioFrame);
-            if(!ret){
-                qDebug() << "mInputStream1 addSampleToFifo fail.";
-                break;
-            }
-        }
-        qDebug() <<"mInputStream1 44";
-        if (mInputStream1->getFifoSize() >= output_frame_size){
-             qDebug() <<"mInputStream1 55";
-            ret = mInputStream1->readSampleFromFifo1(&output_frame, mOutputStream->getAudioCodec()->getCodecContex());
-            if(!ret){
-                qDebug() << "mInputStream1 readSampleFromFifo fail.";
-                continue;
-            }
-             qDebug() <<"mInputStream1 66";
-            if(mOutputStream->getOutStreamStatus()) {
-                int errCode = 0;
-                bool ret = mOutputStream->writeOneFrameToStream(output_frame, mInputStream1->getCodecMediaType(), &errCode);
-                if(!ret) {
-                    if(errCode == -2){
-                        bool ret1 = true;
-                        while(true) {
-                            if(ret1)
-                                mOutputStream->closeStream();
-                            ret1 = mOutputStream->openStream();
-                            if(ret1)
-                                break;
-                        }
+        if(mOutputStream->getOutStreamStatus()) {
+             ret = mInputStream->getOneFrameFromStream(frame);
+             if(!ret){
+                 //qDebug() << "VideoCaptureThread getOneFrameFromStream fail.";
+                 //QThread::msleep(30);
+                 continue;
+             }
+
+             AVFrame *tmpFrame = av_frame_clone(frame);
+             if(tmpFrame != NULL){
+                 frameToList(tmpFrame);
+                 tmpFrame = NULL;
+             }
+
+             int errCode = 0;
+             ret = mOutputStream->writeOneFrameToStream(frame, mInputStream->getCodecMediaType(), &errCode);
+             if(!ret) {
+                if(errCode == -2){
+                    bool ret1 = true;
+                    while(true) {
+                        if(ret1)
+                            mOutputStream->closeStream();
+                        ret1 = mOutputStream->openStream();
+                        if(ret1)
+                            break;
                     }
-                }
-            }
-        }
-         qDebug() <<"mInputStream1 77";
-#endif
-        if(audioFrame){
-             qDebug() <<"mInputStream1 7117";
-            av_frame_free(&audioFrame);
-        }
-        else
-            qDebug() <<"mInputStream1 99";
-        if(output_frame){
-            qDebug() <<"mInputStream1 8118";
-            av_frame_free(&output_frame);
-        }
-        else
-            qDebug() <<"mInputStream1 1010";
-         qDebug() <<"mInputStream1 88";
+                 }
+             }
+         }
+
      }
 
+     if(out_buffer){
+         av_free(out_buffer);
+         out_buffer = NULL;
+     }
+     if(frame){
+         av_frame_free(&frame);
+         frame = NULL;
+     }
+}
+
+bool WSStreamManager::frameToList(AVFrame *frame){
+    QMutexLocker lock(&listLock);
+    frameList.push_back(frame);
+
+    return true;
 }

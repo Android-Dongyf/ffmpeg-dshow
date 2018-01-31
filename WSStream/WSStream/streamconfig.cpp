@@ -4,7 +4,7 @@
 #include <QByteArray>
 #include <QString>
 #include <QDebug>
-
+#include <QTextCodec>
 #include "rapidjson/document.h"
 #include "rapidjson/prettywriter.h"
 #include "rapidjson/stringbuffer.h"
@@ -12,18 +12,26 @@ using namespace rapidjson;
 
 
 string StreamConfig::video_input_fmt;
+int StreamConfig::video_index;
 string StreamConfig::video_desc;
 string StreamConfig::video_framerate;
 int StreamConfig::video_width;
 int StreamConfig::video_height;
+int StreamConfig::video_crop_width;
+int StreamConfig::video_crop_height;
 string StreamConfig::video_fmt;
+string StreamConfig::filter_description;
+int StreamConfig::video_encode_rate;
+int StreamConfig::video_encode_width;
+int StreamConfig::video_encode_height;
 string StreamConfig::audio_input_fmt;
 string StreamConfig::audio_desc;
 int StreamConfig::audio_input_channel;
 int StreamConfig::audio_sample_rate;
 string StreamConfig::stream_output_fmt;
 int StreamConfig::stream_output_framerate;
-string StreamConfig::stream_output_addr;
+string StreamConfig::stream_output_addr_master;
+string StreamConfig::stream_output_addr_slave;
 int StreamConfig::stream_output_port;
 string StreamConfig::stream_output_secret;
 string StreamConfig::stream_output_index;
@@ -31,6 +39,8 @@ string StreamConfig::jpeg_encoder_fmt;
 string StreamConfig::jpeg_file_name;
 string StreamConfig::machine_code;
 int StreamConfig::http_svr_port;
+string StreamConfig::http_svr_addr;
+
 
 StreamConfig::StreamConfig()
 {
@@ -48,7 +58,7 @@ void StreamConfig::loadConfigFromFile(const string fileName){
 
     QTextStream in(&file);
     QString str = in.readAll();
-    QByteArray data = str.toLatin1();
+    QByteArray data = str.toUtf8();
     char *val = data.data();
     //qDebug() << "val: " <<  val;
 
@@ -62,7 +72,6 @@ void StreamConfig::loadConfigFromFile(const string fileName){
 }
 
 bool StreamConfig::parseByJson(const char *val){
-    bool ret  = true;
     Document document;
 
     if (document.Parse<0>(val).HasParseError())
@@ -75,6 +84,11 @@ bool StreamConfig::parseByJson(const char *val){
         const char *str = document["video_input_fmt"].GetString();
         string val(str);
         video_input_fmt = val;
+    }
+
+    if(document.HasMember("video_index")) {
+        int val = document["video_index"].GetInt();
+        video_index = val;
     }
 
     if(document.HasMember("video_desc")) {
@@ -99,10 +113,41 @@ bool StreamConfig::parseByJson(const char *val){
         video_height = val;
     }
 
+    if(document.HasMember("filter_description")) {
+        const char *str = document["filter_description"].GetString();
+        string val(str);
+        filter_description = val;
+    }
+
+    if(document.HasMember("video_crop_width")) {
+        int val = document["video_crop_width"].GetInt();
+        video_crop_width = val;
+    }
+
+    if(document.HasMember("video_crop_height")) {
+        int val = document["video_crop_height"].GetInt();
+        video_crop_height = val;
+    }
+
+    if(document.HasMember("video_encode_width")) {
+        int val = document["video_encode_width"].GetInt();
+        video_encode_width = val;
+    }
+
+    if(document.HasMember("video_encode_height")) {
+        int val = document["video_encode_height"].GetInt();
+        video_encode_height = val;
+    }
+
     if(document.HasMember("video_fmt")) {
         const char *str = document["video_fmt"].GetString();
         string val(str);
         video_fmt = val;
+    }
+
+    if(document.HasMember("video_encode_rate")) {
+        int val = document["video_encode_rate"].GetInt();
+        video_encode_rate = val;
     }
 
     if(document.HasMember("audio_input_fmt")) {
@@ -138,10 +183,16 @@ bool StreamConfig::parseByJson(const char *val){
         stream_output_framerate = val;
     }
 
-    if(document.HasMember("stream_output_addr")) {
-        const char *str = document["stream_output_addr"].GetString();
+    if(document.HasMember("stream_output_addr_master")) {
+        const char *str = document["stream_output_addr_master"].GetString();
         string val(str);
-        stream_output_addr = val;
+        stream_output_addr_master = val;
+    }
+
+    if(document.HasMember("stream_output_addr_slave")) {
+        const char *str = document["stream_output_addr_slave"].GetString();
+        string val(str);
+        stream_output_addr_slave = val;
     }
 
     if(document.HasMember("stream_output_port")) {
@@ -184,11 +235,21 @@ bool StreamConfig::parseByJson(const char *val){
         http_svr_port = val;
     }
 
+    if(document.HasMember("http_svr_addr")) {
+        const char *str = document["http_svr_addr"].GetString();
+        string val(str);
+        http_svr_addr = val;
+    }
+
     return true;
 }
 
 string StreamConfig::video_input_fmt_val(){
     return video_input_fmt;
+}
+
+int StreamConfig::video_index_val(){
+    return video_index;
 }
 
 string StreamConfig::video_desc_val(){
@@ -207,6 +268,26 @@ int StreamConfig::video_height_val(){
     return video_height;
 }
 
+int StreamConfig::video_crop_width_val(){
+    return video_crop_width;
+}
+
+int StreamConfig::video_crop_height_val(){
+    return video_crop_height;
+}
+
+string StreamConfig::filter_description_val(){
+    return filter_description;
+}
+
+int StreamConfig::video_encode_width_val(){
+    return video_encode_width;
+}
+
+int StreamConfig::video_encode_height_val(){
+    return video_encode_height;
+}
+
 string StreamConfig::video_size_str_val(){
     char buf[128] = {0};
 
@@ -217,6 +298,10 @@ string StreamConfig::video_size_str_val(){
 
 string StreamConfig::video_fmt_val(){
     return video_fmt;
+}
+
+int StreamConfig::video_encode_rate_val(){
+    return video_encode_rate;
 }
 
 string StreamConfig::audio_input_fmt_val(){
@@ -243,8 +328,16 @@ int StreamConfig::stream_output_framerate_val(){
     return stream_output_framerate;
 }
 
-string StreamConfig::stream_output_addr_val(){
-    return stream_output_addr;
+string StreamConfig::stream_output_addr_master_val(){
+    return stream_output_addr_master;
+}
+
+string StreamConfig::stream_output_addr_slave_val(){
+    return stream_output_addr_slave;
+}
+
+string StreamConfig::http_svr_addr_val(){
+    return http_svr_addr;
 }
 
 int StreamConfig::stream_output_port_val(){
@@ -289,7 +382,8 @@ void StreamConfig::dump(){
     qDebug() << "audio_sample_rate: " << audio_sample_rate;
     qDebug() << "stream_output_fmt: " << stream_output_fmt.c_str();
     qDebug() << "stream_output_framerate: " << stream_output_framerate;
-    qDebug() << "stream_output_addr: " << stream_output_addr.c_str();
+    qDebug() << "stream_output_addr_master: " << stream_output_addr_master.c_str();
+    qDebug() << "stream_output_addr_slave: " << stream_output_addr_slave.c_str();
     qDebug() << "stream_output_port: " << stream_output_port;
     qDebug() << "stream_output_secret: " << stream_output_secret.c_str();
     qDebug() << "stream_output_index: " << stream_output_index.c_str();

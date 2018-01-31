@@ -7,10 +7,11 @@ JpegUtils::JpegUtils()
 }
 
 JpegUtils::~JpegUtils(){
+    qDebug() << "JpegUtils::~JpegUtils";
     closeStream();
 }
 
-bool JpegUtils::init(){
+bool JpegUtils::init(bool isMaster){
     bool ret =true;
 
     mEncoder = new JpegEncoder();
@@ -105,7 +106,7 @@ bool JpegUtils::writeOneFrameToStream(AVFrame *frame, enum AVMediaType codec_typ
         *err_code = -1;
         return false;
     }
-
+    // qDebug() << "writeOneFrameToStream 1111111111111111111111";
     if(codec_type == AVMEDIA_TYPE_VIDEO){
         bool ret = mEncoder->encode(frame, pkt);
         if(!ret){
@@ -116,14 +117,15 @@ bool JpegUtils::writeOneFrameToStream(AVFrame *frame, enum AVMediaType codec_typ
             return false;
         }
     }
-
+    //qDebug() << "writeOneFrameToStream 22222222222222222222222";
     if(pkt){
         ret = writeFrameToStream(pkt, codec_type);
         if(!ret)
             *err_code = -2;
         av_packet_free(&pkt);
+        pkt = NULL;
     }
-
+   // qDebug() << "writeOneFrameToStream 333333333333333333333";
     return ret;
 }
 
@@ -151,7 +153,9 @@ encoder *JpegUtils::getAudioCodec(){
 
 bool JpegUtils::writeFrameToStream(AVPacket *pkt, enum AVMediaType codec_type){
     //qDebug() << "size: " << pkt->size;
+    //qDebug() << "writeOneFrameToStream 44444444444444444444444";
     int ret = av_interleaved_write_frame(mOutFmtCtx, pkt);
+    //qDebug() << "writeOneFrameToStream 555555555555555555555";
     //int ret = av_write_frame(mOutFmtCtx, pkt);
     if(ret < 0){
         qDebug() << "av_interleaved_write_frame fail.";

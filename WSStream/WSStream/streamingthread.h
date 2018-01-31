@@ -15,6 +15,7 @@ protected:
     virtual void run() Q_DECL_OVERRIDE;
 private:
     WSStreamManager ws;
+    //WSStreamManager *pWs;
 
 };
 

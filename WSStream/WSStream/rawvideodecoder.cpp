@@ -4,10 +4,17 @@
 RawVideoDecoder::RawVideoDecoder()
 :decoder()
 {
-
+    mCvtCtx = NULL;
+    mFrame422 = NULL;
+    videoCrop = NULL;
 }
 RawVideoDecoder::~RawVideoDecoder(){
     closeDecoder();
+
+    if(videoCrop){
+        videoCrop->deleteLater();
+        videoCrop = NULL;
+    }
 }
 
 bool RawVideoDecoder::init(AVFormatContext *fmtCtx){
@@ -16,10 +23,17 @@ bool RawVideoDecoder::init(AVFormatContext *fmtCtx){
        qDebug() << "openDecoder fail.";
     }
 
-    mCvtCtx = sws_getContext(mCodeCtx->width, mCodeCtx->height, mCodeCtx->pix_fmt, mCodeCtx->width,
-                             mCodeCtx->height, AV_PIX_FMT_YUV420P, SWS_BICUBIC, NULL, NULL, NULL);
+    mCvtCtx = sws_getContext(StreamConfig::video_crop_width_val()/*mCodeCtx->width*/, StreamConfig::video_crop_height_val()/*mCodeCtx->height*/,
+                             mCodeCtx->pix_fmt, StreamConfig::video_crop_width_val()/*mCodeCtx->width*/,
+                             StreamConfig::video_crop_height_val()/*mCodeCtx->height*/, AV_PIX_FMT_YUV420P, SWS_BICUBIC, NULL, NULL, NULL);
     mFrame422 = av_frame_alloc();
-    //mFrame420 = av_frame_alloc();
+    if(mFrame422 == NULL){
+        return false;
+    }
+    mFrame420 = av_frame_alloc();
+    if(mFrame420 == NULL){
+        return false;
+    }
     //unsigned char *out_buffer=(unsigned char *)av_malloc(avpicture_get_size(AV_PIX_FMT_YUV420P, mCodeCtx->width, mCodeCtx->height));
     //avpicture_fill((AVPicture *)mFrame420, out_buffer, AV_PIX_FMT_YUV420P, mCodeCtx->width, mCodeCtx->height);
     /*mFrame420->format = AV_PIX_FMT_YUV420P;
@@ -30,74 +44,55 @@ bool RawVideoDecoder::init(AVFormatContext *fmtCtx){
         ret = false;
     }*/
 
+    videoCrop = new VideoCropFilter();
+    if(videoCrop){
+        ret = videoCrop->initWithInputFmtCtxAndDecCtx(fmtCtx, mCodeCtx);
+        if(!ret){
+            qDebug() << "initWithInputFmtCtxAndDecCtx fail.";
+            return false;
+        }
+        qDebug() << "initWithInputFmtCtxAndDecCtx success.";
+    }
+
     return ret;
 }
 
 bool RawVideoDecoder::decode(AVPacket *pkt, AVFrame *frame){
-    int ret, gotFrame = 0, rc;
-    static int64_t lastPts = 0;
-    //qDebug() << "RawVideoDecoder: " << pkt->stream_index;
+    int ret, gotFrame = 0;
+    bool rc = true;
+
     ret = avcodec_decode_video2(mCodeCtx, mFrame422, &gotFrame, pkt);
     if(ret < 0){
         qDebug() << "RawVideoDecoder decode errer";
         return false;
     }
-    //qDebug() << "ret: " << ret << " gotFrame: " << gotFrame;
+    qDebug() << "ret: " << ret << " gotFrame: " << gotFrame << " fmt: " << mFrame422->format;
     if(gotFrame){
-        if(lastPts != mFrame422->pts){
-             frame->pts = mFrame422->pts;
-             lastPts = mFrame422->pts;
-        }
-        else{
-            qDebug() << "RawVideoDecoder ret: " << ret;
-            qDebug() << "RawVideoDecoder   pts is same";
-            frame->pts = mFrame422->pts;
-            lastPts = mFrame422->pts;
-            return false;
-        }
+       //²Ã¼ôÊÓÆµÊý¾Ý
+       if(videoCrop){
+           rc = videoCrop->cropVideoWithFrame(mFrame422, &mFrame420);
+           if(!rc){
+               qDebug() << "cropVideoWithFrame fail.";
+               av_frame_unref(mFrame422);
+               return false;
+           }
+           qDebug() << "cropVideoWithFrame success.";
+       }
 
-       sws_scale(mCvtCtx, (const unsigned char* const*)mFrame422->data, mFrame422->linesize, 0, mCodeCtx->height, frame->data, frame->linesize);
-       frame->width = mCodeCtx->width;
-       frame->height = mCodeCtx->height;
+       sws_scale(mCvtCtx, (const unsigned char* const*)mFrame420->data, mFrame420->linesize, 0, StreamConfig::video_crop_height_val(), frame->data, frame->linesize);
+       frame->width = StreamConfig::video_crop_width_val();
+       frame->height = StreamConfig::video_crop_height_val();
        frame->format = AV_PIX_FMT_YUV420P;
-#if Debug
-       printf("lastPts: %lld pts: %lld\n", lastPts, mFrame422->pts);
-#endif
+       frame->pts = mFrame422->pts;
+       av_frame_unref(mFrame422);
+       av_frame_unref(mFrame420);
+       return true;
     }
-    if(gotFrame)
-        return true;
     else {
-        qDebug() << "gotFrame: " << gotFrame;
+        av_frame_unref(mFrame422);
+        av_frame_unref(mFrame420);
         return false;
     }
-
-    if(pkt == NULL || frame == NULL) {
-        printf("pkt == NULL or frame == NULL\n");
-        return false;
-    }
-
-    ret = avcodec_send_packet(mCodeCtx, pkt);
-    if (ret < 0) {
-        fprintf(stderr, "Error sending a packet for decoding\n");
-        return false;
-    }
-
-    while (ret >= 0) {
-        ret = avcodec_receive_frame(mCodeCtx, frame);
-        if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF){
-            printf("avcodec_receive_frame ret: %d\n", ret);
-            return false;
-        }
-        else if (ret < 0) {
-            fprintf(stderr, "Error during decoding\n");
-            return false;
-        }
-#if Debug
-        printf("dec frame_number %3d\n", mCodeCtx->frame_number);
-#endif
-    }
-
-    return true;
 }
 
 bool RawVideoDecoder::openDecoder(AVFormatContext *fmtCtx){
@@ -149,11 +144,20 @@ bool RawVideoDecoder::openDecoder(AVFormatContext *fmtCtx){
 }
 
 bool RawVideoDecoder::closeDecoder(){
-    if(mParser)
-        av_parser_close(mParser);
 
-    if(mFrame422)
+    if(mCvtCtx){
+        sws_freeContext(mCvtCtx);
+    }
+
+    if(mFrame422){
         av_frame_free(&mFrame422);
+        mFrame422 = NULL;
+    }
     //av_frame_free(&mFrame420);
+
+    if(mCodeCtx){
+        avcodec_free_context(&mCodeCtx);
+    }
+
     return true;
 }

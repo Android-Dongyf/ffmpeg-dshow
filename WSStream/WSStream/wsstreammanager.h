@@ -4,11 +4,14 @@
 #include <QObject>
 #include <common.h>
 #include <ffmpegmanager.h>
+#include <QMutex>
+#include <QList>
 
 #include "videoinputstream.h"
 #include "audioinputstream.h"
 #include "multiavstream.h"
 #include "videocapturethread.h"
+
 
 class WSStreamManager : public QObject
 {
@@ -20,6 +23,7 @@ public:
     void start();
 private:
     void init();
+    bool frameToList(AVFrame *frame);
 signals:
 
 public slots:
@@ -30,8 +34,11 @@ private:
     InputStream *mInputStream;
     InputStream *mInputStream1;
     OutputStream *mOutputStream;
-
+    OutputStream *mOutputStream1;
+    VideoCropFilter *videoCrop;
     VideoCaptureThread *videoCapThread;
+    QList<AVFrame *> frameList;
+    QMutex listLock;
 };
 
 #endif // WSSTREAMMANAGER_H

@@ -2,6 +2,7 @@
 #define RAWVIDEODECODER_H
 
 #include "decoder.h"
+#include "videocropfilter.h"
 
 class RawVideoDecoder : public decoder
 {
@@ -18,10 +19,10 @@ private:
 private:
     AVCodecContext *mCodeCtx;
     AVCodec *mCodec;
-    AVCodecParserContext *mParser;
     struct SwsContext *mCvtCtx;
     AVFrame *mFrame420;
     AVFrame *mFrame422;
+    VideoCropFilter *videoCrop;
 };
 
 #endif // RAWVIDEODECODER_H

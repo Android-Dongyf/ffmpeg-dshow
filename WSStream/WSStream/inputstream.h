@@ -20,6 +20,8 @@ public:
     virtual bool addSampleToFifo(AVFrame *frame) = 0;
     virtual bool readSampleFromFifo(AVFrame *frame, AVCodecContext *output_codec_context) = 0;
     virtual bool readSampleFromFifo1(AVFrame **frame, AVCodecContext *output_codec_context) = 0;
+    virtual bool destroyFifo() = 0;
+    virtual AVFormatContext *getInputFormatCtx() = 0;
     virtual enum AVMediaType getCodecMediaType() = 0;
 private:
     virtual bool openStream() = 0;

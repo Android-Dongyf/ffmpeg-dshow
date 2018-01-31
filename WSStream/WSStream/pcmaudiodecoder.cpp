@@ -84,6 +84,8 @@ bool PcmAudioDecoder::openDecoder(AVFormatContext *fmtCtx){
 }
 
 bool PcmAudioDecoder::closeDecoder(){
-
+    if(mCodeCtx){
+        avcodec_free_context(&mCodeCtx);
+    }
     return true;
 }

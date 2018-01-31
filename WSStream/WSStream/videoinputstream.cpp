@@ -2,7 +2,11 @@
 #include <QThread>
 
 VideoInputStream::VideoInputStream(): InputStream(){
-
+    mCodecDecoder = NULL;
+    mIfmt = NULL;
+    mIfmtCtx = NULL;
+    in_thread_queue = NULL;
+    deviceLock = NULL;
 }
 
 VideoInputStream::~VideoInputStream() {
@@ -139,6 +143,11 @@ bool VideoInputStream::openStream(){
         if(av_opt_find(&mIfmt->priv_class, "pixel_format", NULL, 0, AV_OPT_SEARCH_FAKE_OBJ)){
             av_dict_set(&infmtOpt, "pixel_format", StreamConfig::video_fmt_val().c_str()/*DEFAULT_CAPTURE_FMT*/, 0);
         }
+
+        if(av_opt_find(&mIfmt->priv_class, "video_device_number", NULL, 0, AV_OPT_SEARCH_FAKE_OBJ)){
+            qDebug() << "StreamConfig::video_index_val(): " << StreamConfig::video_index_val();
+            av_dict_set_int(&infmtOpt, "video_device_number", StreamConfig::video_index_val(), 0);
+        }
     }
 #if Debug
     printf("video: framerate: %s video_size: %s\n",
@@ -222,15 +231,12 @@ bool VideoInputStream::closeStream() {
 bool VideoInputStream::getOneFrameFromStream(AVFrame *frame) {
     AVPacket *pkt = NULL;
     bool Ret = false;
-    AVPacket pkt1;
     static int64_t lastPts = 0;
     pkt = av_packet_alloc();
     if(!pkt){
         qDebug() << "av_packet_alloc fail pkt == NULL.";
         return false;
     }
-
-//    av_init_packet(&pkt1);
 
     /*int ret = get_input_packet_mt(pkt);
     if (ret < 0) {
@@ -247,14 +253,13 @@ bool VideoInputStream::getOneFrameFromStream(AVFrame *frame) {
         av_usleep(10000);
         qDebug() << "VideoInputStream read error";
         av_packet_free(&pkt);
-        //av_free_packet(&pkt1);
         pkt = NULL;
         return false;
     }
-    //qDebug() << "packet pts: " << pkt->pts;
-    //qDebug() << "packet lastPts: " << lastPts;
+    //qDebug() << "packet size: " << pkt->size;
     if(lastPts == pkt->pts){
         av_packet_free(&pkt);
+        pkt = NULL;
         qDebug() << "VideoInputStream packet pts is same to last pts, drop it";
         return false;
     }
@@ -263,12 +268,10 @@ bool VideoInputStream::getOneFrameFromStream(AVFrame *frame) {
     if(!Ret){
         qDebug() << "VideoInputStream decode fail.";
         av_packet_free(&pkt);
-        //av_packet_unref(&pkt1);
         pkt = NULL;
         return false;
     }
-    //qDebug() << "VideoInputStream decode success";
-    //av_packet_unref(&pkt1);
+    //qDebug() << "VideoInputStream decode success";;
     av_packet_free(&pkt);
     pkt = NULL;
     return true;
@@ -295,7 +298,15 @@ bool VideoInputStream::readSampleFromFifo1(AVFrame **frame, AVCodecContext *outp
 
 }
 
+bool VideoInputStream::destroyFifo(){
+
+}
+
 enum AVMediaType VideoInputStream::getCodecMediaType(){
     //printf("VideoInputStream mCodecMediaType: %d\n", mCodecMediaType);
     return mCodecMediaType;
+}
+
+AVFormatContext *VideoInputStream::getInputFormatCtx(){
+    return mIfmtCtx;
 }

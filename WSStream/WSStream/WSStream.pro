@@ -10,6 +10,8 @@ CONFIG -= app_bundle
 
 TEMPLATE = app
 
+#DEFINES+= QT_NO_DEBUG_OUTPUT
+
 SOURCES += main.cpp \
     decoder.cpp \
     encoder.cpp \
@@ -31,7 +33,8 @@ SOURCES += main.cpp \
     jpegencoder.cpp \
     httpuploadthread.cpp \
     httpuploadutils.cpp \
-    streamconfig.cpp
+    streamconfig.cpp \
+    videocropfilter.cpp
 
 LIBS += F:\dongyf\ffmpeg\dev\lib\libavcodec.dll.a \
         F:\dongyf\ffmpeg\dev\lib\libavdevice.dll.a \
@@ -102,4 +105,5 @@ HEADERS += \
     rapidjson/stream.h \
     rapidjson/stringbuffer.h \
     rapidjson/writer.h \
-    streamconfig.h
+    streamconfig.h \
+    videocropfilter.h

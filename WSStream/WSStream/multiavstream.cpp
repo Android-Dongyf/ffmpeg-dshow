@@ -9,10 +9,21 @@
 MultiAVStream::MultiAVStream()
 :OutputStream()
 {
-
+    master = true;
+    mOutFmt = NULL;
+    mOutFmtCtx = NULL;
+    mOutStream = NULL;
+    mOutAudioStream = NULL;
+    mVideoEncoder = NULL;
+    mAudioEncoder = NULL;
+    mStatusOk = false;
+    audioPts = 0;
 }
 
 MultiAVStream::~MultiAVStream() {
+    closeStream();
+
+    audioPts = 0;
     if(mVideoEncoder)
         delete mVideoEncoder;
 
@@ -20,30 +31,43 @@ MultiAVStream::~MultiAVStream() {
         delete mAudioEncoder;
 }
 
-bool MultiAVStream::init() {
-    mVideoEncoder = new Mpeg1VideoEncoder();
+void MultiAVStream::setSlaveOrMaster(bool isMaster){
+    master = isMaster;
+}
+
+bool MultiAVStream::init(bool isMaster) {
+    bool ret = true;
+
+    setSlaveOrMaster(isMaster);
+
     if(!mVideoEncoder) {
-        printf("Mpeg1VideoEncoder fail. \n");
-        return false;
+        mVideoEncoder = new Mpeg1VideoEncoder();
+        if(!mVideoEncoder) {
+            printf("Mpeg1VideoEncoder fail. \n");
+            return false;
+        }
+
+        ret = mVideoEncoder->init();
+        if(!ret) {
+            printf("mVideoEncoder init fail.\n");
+            return false;
+        }
     }
 
-    bool ret = mVideoEncoder->init();
-    if(!ret) {
-        printf("mVideoEncoder init fail.\n");
-        return false;
-    }
 
-    mAudioEncoder = new Mp2AudioEncoder();
-    if(!mAudioEncoder) {
-        printf("Mp2AudioEncoder fail. \n");
-        return false;
-    }
+//    if(!mAudioEncoder) {
+//        mAudioEncoder = new Mp2AudioEncoder();
+//        if(!mAudioEncoder) {
+//            printf("Mp2AudioEncoder fail. \n");
+//            return false;
+//        }
 
-    ret = mAudioEncoder->init();
-    if(!ret) {
-        printf("mAudioEncoder init fail.\n");
-        return false;
-    }
+//        ret = mAudioEncoder->init();
+//        if(!ret) {
+//            printf("mAudioEncoder init fail.\n");
+//            return false;
+//        }
+//    }
 
     ret = openStream();
     if(!ret) {
@@ -63,24 +87,11 @@ bool MultiAVStream::writeHeaderToStream(){
     int ret = avformat_write_header(mOutFmtCtx, &opt);
     if (ret < 0) {
         printf("avformat_write_header ret: %d\n", ret);
-       // fprintf(stderr, "Error occurred when opening output file: %s\n",
-         //       av_err2str(ret));
         return false;
     }
 
     return true;
 }
-
-/*static void log_packet(const AVFormatContext *fmt_ctx, const AVPacket *pkt)
-{
-    AVRational *time_base = &fmt_ctx->streams[pkt->stream_index]->time_base;
-
-    printf("pts:%s pts_time:%s dts:%s dts_time:%s duration:%s duration_time:%s stream_index:%d\n",
-           av_ts2str(pkt->pts), av_ts2timestr(pkt->pts, time_base),
-           av_ts2str(pkt->dts), av_ts2timestr(pkt->dts, time_base),
-           av_ts2str(pkt->duration), av_ts2timestr(pkt->duration, time_base),
-           pkt->stream_index);
-}*/
 
 bool MultiAVStream::writeFrameToStream(AVPacket *pkt, enum AVMediaType codec_type){
     /* rescale output packet timestamp values from codec to stream timebase */
@@ -100,7 +111,7 @@ bool MultiAVStream::writeFrameToStream(AVPacket *pkt, enum AVMediaType codec_typ
 
     mWriteLock.lock();
     if(!mOutFmtCtx) {
-        printf("mOutFmtCtx == NULL \n");
+        qDebug() << "mOutFmtCtx == NULL ";
         mWriteLock.unlock();
         return false;
     }
@@ -112,7 +123,8 @@ bool MultiAVStream::writeFrameToStream(AVPacket *pkt, enum AVMediaType codec_typ
         return false;
     }
 #if 1
-   qDebug() << "av_interleaved_write_frame success.codec_type: " << codec_type;
+    if(!master)
+        qDebug() << "av_interleaved_write_frame success.codec_type: " << codec_type;
 #endif
     mWriteLock.unlock();
     return true;
@@ -133,8 +145,8 @@ bool MultiAVStream::writeOneFrameToStream(AVFrame *frame, enum AVMediaType codec
     if(codec_type == AVMEDIA_TYPE_VIDEO){
         bool ret = mVideoEncoder->encode(frame, pkt);
 
-        AVRational time_base={1, 10000000};
-        AVRational time_base_q={1, AV_TIME_BASE};
+        AVRational time_base = {1, 10000000};
+        AVRational time_base_q = {1, AV_TIME_BASE};
         int64_t pts_time = av_rescale_q(pkt->dts, time_base, time_base_q);
         int64_t now_time = av_gettime() - start_time;
         if (pts_time > now_time)
@@ -147,16 +159,17 @@ bool MultiAVStream::writeOneFrameToStream(AVFrame *frame, enum AVMediaType codec
             *err_code = -1;
             return false;
         }
-        qDebug() << "MultiAVStream AVMEDIA_TYPE_VIDEO encode success.";
+        if(!master)
+            qDebug() << "MultiAVStream AVMEDIA_TYPE_VIDEO encode success.";
     }
 
     if(codec_type == AVMEDIA_TYPE_AUDIO) {
         static int64_t pts = 0;
         if(frame){
-            frame->pts = pts++;
+            frame->pts = audioPts;//pts;
+            audioPts += frame->nb_samples;
             pts += frame->nb_samples;
         }
-
         bool ret = mAudioEncoder->encode(frame, pkt);
 
         AVRational time_base = {1, 10000000};
@@ -191,15 +204,19 @@ bool MultiAVStream::writeOneFrameToStream(AVFrame *frame, enum AVMediaType codec
         pkt = NULL;
     }
     mStatusLock.unlock();
-    *err_code = 0;
     return ret;
 }
 
 bool MultiAVStream::openStream(){
     mStatusLock.lock();
     char url[128] = {0};
-    sprintf(url, "http://%s:%d/%s/%s", StreamConfig::stream_output_addr_val().c_str(),
-            StreamConfig::stream_output_port_val(), StreamConfig::stream_output_secret_val().c_str(), StreamConfig::stream_output_index_val().c_str());
+
+    if(master)
+        sprintf(url, "http://%s:%d/%s/%s", StreamConfig::stream_output_addr_master_val().c_str(),
+                StreamConfig::stream_output_port_val(), StreamConfig::stream_output_secret_val().c_str(), StreamConfig::machine_code_val().c_str());
+    else
+        sprintf(url, "http://%s:%d/%s/%s_slave", StreamConfig::stream_output_addr_master_val().c_str(),
+                StreamConfig::stream_output_port_val(), StreamConfig::stream_output_secret_val().c_str(), StreamConfig::machine_code_val().c_str());
     qDebug() << "url: " << url;
     /* allocate the output media context */
     avformat_alloc_output_context2(&mOutFmtCtx, NULL, StreamConfig::stream_output_fmt_val().c_str()/*DEFAULT_OUTPUT_FMT*/, url/*DEFAULT_OUTPUT_STREAM*/);
@@ -221,13 +238,13 @@ bool MultiAVStream::openStream(){
     if (!mOutStream) {
         fprintf(stderr, "Could not allocate stream\n");
         avformat_free_context(mOutFmtCtx);
+        mOutFmtCtx = NULL;
         mStatusLock.unlock();
         return false;
     }
     //printf("nb_streams: %d\n", mOutFmtCtx->nb_streams);
     mOutStream->id = mOutFmtCtx->nb_streams - 1;
     AVRational timeBase = {1, StreamConfig::stream_output_framerate_val()/*DEFAULT_STREAM_FRAMERATE*/};
-    //AVRational timeBase = {1, 90000};
     mOutStream->time_base = timeBase;
 
     if(mVideoEncoder) {
@@ -237,23 +254,24 @@ bool MultiAVStream::openStream(){
         if (ret < 0) {
             fprintf(stderr, "Could not copy the stream parameters\n");
             avformat_free_context(mOutFmtCtx);
+            mOutFmtCtx = NULL;
             mStatusLock.unlock();
             return false;
         }
     }
 #endif
-#if 1
+#if 0
     mOutAudioStream = avformat_new_stream(mOutFmtCtx, NULL);
     if (!mOutAudioStream) {
         fprintf(stderr, "Could not allocate stream\n");
         avformat_free_context(mOutFmtCtx);
+        mOutFmtCtx = NULL;
         mStatusLock.unlock();
         return false;
     }
 
     mOutAudioStream->id = mOutFmtCtx->nb_streams - 1;
-    AVRational timeBase1 = {1, 32000};
-    //AVRational timeBase1 = {1, 90000};
+    AVRational timeBase1 = {1, StreamConfig::audio_sample_rate_val()};
     mOutAudioStream->time_base = timeBase1;
 
     if(mAudioEncoder) {
@@ -263,6 +281,7 @@ bool MultiAVStream::openStream(){
         if (ret < 0) {
             fprintf(stderr, "Could not copy the stream parameters\n");
             avformat_free_context(mOutFmtCtx);
+            mOutFmtCtx = NULL;
             mStatusLock.unlock();
             return false;
         }
@@ -273,14 +292,11 @@ bool MultiAVStream::openStream(){
     /* open the output file, if needed */
     if (!(mOutFmt->flags & AVFMT_NOFILE)) {
         AVDictionary *opt = NULL;
-        //av_dict_set(&opt, "content_type", "multipart/form-data", 0);
 
-        //av_dict_set_int(&opt, "multiple_requests", 1, 0);
-        //av_dict_set_int(&opt, "chunked_post", 0, 0);
-        //int ret = avio_open(&mOutFmtCtx->pb, DEFAULT_OUTPUT_STREAM, AVIO_FLAG_WRITE);
         int ret = avio_open2(&mOutFmtCtx->pb, url, AVIO_FLAG_WRITE, NULL, &opt);
         if (ret < 0) {
             avformat_free_context(mOutFmtCtx);
+            mOutFmtCtx = NULL;
             //fprintf(stderr, "Could not open '%s': %s\n", filename,
             //        av_err2str(ret));
             char buf[1024] = {0};
@@ -290,9 +306,9 @@ bool MultiAVStream::openStream(){
             return false;
         }
     }
-
-
+    qDebug() << "write header";
     mStatusOk = true;
+    //写输出格式头部信息
     writeHeaderToStream();
     mStatusLock.unlock();
     return true;
@@ -307,11 +323,11 @@ bool MultiAVStream::getOutStreamStatus(){
 
 bool MultiAVStream::closeStream(){
     mStatusLock.lock();
-    if (!(mOutFmt->flags & AVFMT_NOFILE))
-            /* Close the output file. */
-            avio_closep(&mOutFmtCtx->pb);
-
     if(mOutFmtCtx) {
+        if (!(mOutFmt->flags & AVFMT_NOFILE))
+                /* Close the output file. */
+                avio_closep(&mOutFmtCtx->pb);
+
         avformat_free_context(mOutFmtCtx);
         mOutFmtCtx = NULL;
     }

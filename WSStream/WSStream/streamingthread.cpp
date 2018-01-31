@@ -4,6 +4,7 @@
 StreamingThread::StreamingThread(QObject *parent)
 :QThread(parent)
 {
+    //pWs = NULL;
     connect(this, SIGNAL(finished()), this, SLOT(deleteLater()));
     qDebug() << "StreamingThread::StreamingThread : " << QThread::currentThreadId();
 }
@@ -11,6 +12,13 @@ StreamingThread::StreamingThread(QObject *parent)
 void StreamingThread::run(){
     qDebug() << "StreamingThread::run : " << QThread::currentThreadId();
 
+    //while(true){
+        //pWs = new WSStreamManager();
+        //pWs->start();
+
+        //delete pWs;
+        //pWs = NULL;
+   // }
     ws.start();
 }
 

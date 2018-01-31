@@ -1,7 +1,7 @@
 #include "videocapturethread.h"
 #include <QDebug>
 #include <QDateTime>
-
+#include <QMutexLocker>
 
 VideoCaptureThread::VideoCaptureThread(QObject *parent)
 :QThread(parent)
@@ -15,72 +15,113 @@ VideoCaptureThread::VideoCaptureThread(QObject *parent)
     mHttpThread.start();
 }
 
-void VideoCaptureThread::setInputStream(InputStream *in){
-    mIn = in;
+VideoCaptureThread::~VideoCaptureThread(){
+    mHttpThread.exit();
 }
 
 void VideoCaptureThread::setOutputStream(OutputStream *out){
     mOut = out;
 }
 
+void VideoCaptureThread::setFrameListAndLock(QList<AVFrame *> *list, QMutex *lock){
+    mList = list;
+    mLock = lock;
+}
+
+void VideoCaptureThread::run(){
+    qDebug() << "videoCaptureThread::run : " << QThread::currentThreadId();
+    AVFrame *frame = NULL;
+    bool ret = true;
+
+    while(true) {
+        //初始化输出
+        ret = mOut->init(true);
+        if(ret)
+            break;
+        qDebug() << "need exit";
+        mOut->closeStream();
+    }
+
+    while(true) {
+        if(mOut->getOutStreamStatus()) {
+            ret = frameFromList(&frame);
+            if(!ret){
+                av_usleep(10000);
+                continue;
+            }
+            if(frame){
+                upLoadIfNeed(frame);
+
+                int errCode = 0;
+                ret = mOut->writeOneFrameToStream(frame, AVMEDIA_TYPE_VIDEO, &errCode);
+                av_frame_free(&frame);
+                frame = NULL;
+                if(!ret) {
+                   if(errCode == -2){
+                       bool ret1 = true;
+                       while(true) {
+                           if(ret1)
+                               mOut->closeStream();
+                               ret1 = mOut->openStream();
+                               if(ret1)
+                                   break;
+                       }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#if 0
 void VideoCaptureThread::run(){
     qDebug() << "videoCaptureThread::run : " << QThread::currentThreadId();
     bool ret;
     int rc = 0;
     AVFrame *frame = NULL;
-
-    //QThread::sleep(2);
+    unsigned char *out_buffer = NULL;
+    frame = av_frame_alloc();
+    if(frame == NULL){
+        qDebug() << "VideoCaptureThread frame == NULL";
+    }
+    out_buffer = (unsigned char *)av_malloc(avpicture_get_size(AV_PIX_FMT_YUV420P, StreamConfig::video_width_val(), StreamConfig::video_height_val()));
+    if(!out_buffer){
+        qDebug() << "out_buffer == NULL";
+    }
+    rc = avpicture_fill((AVPicture *)frame, out_buffer, AV_PIX_FMT_YUV420P, StreamConfig::video_width_val(), StreamConfig::video_height_val());
+    if(rc < 0){
+         qDebug() << "avpicture_fill fail";
+    }
 
     while(true) {
-        frame = av_frame_alloc();
-        if(frame == NULL){
-            qDebug() << "VideoCaptureThread frame == NULL";
-            continue;
-        }
-        //unsigned char *out_buffer=(unsigned char *)av_malloc(avpicture_get_size(AV_PIX_FMT_YUV420P, StreamConfig::video_width_val(), StreamConfig::video_height_val()));
-        //avpicture_fill((AVPicture *)frame, out_buffer, AV_PIX_FMT_YUV420P, StreamConfig::video_width_val(), StreamConfig::video_height_val());
-        frame->format = AV_PIX_FMT_YUV420P;
-        frame->width  = StreamConfig::video_width_val();
-        frame->height = StreamConfig::video_height_val();
-        rc = av_frame_get_buffer(frame, 32);
-        if(rc < 0){
-            qDebug() << "VideoCaptureThread error.";
-            QThread::msleep(30);
-            continue;
-        }
-
-        rc = av_frame_make_writable(frame);
-        if(rc < 0){
-            qDebug() << "VideoCaptureThread  frame is not writable.";
-            av_frame_free(&frame);
-            frame = NULL;
-            QThread::msleep(30);
-            continue;
-        }
-
-        ret = mIn->getOneFrameFromStream(frame);
-        if(!ret){
-            //qDebug() << "VideoCaptureThread getOneFrameFromStream fail.";
-            QThread::msleep(30);
-            av_frame_free(&frame);
-            frame = NULL;
-            continue;
-        }
-       // qDebug() << "w: " << frame->width << " h: " << frame->height;
-
-        upLoadIfNeed(frame);
-
         if(mOut->getOutStreamStatus()) {
+            ret = mIn->getOneFrameFromStream(frame);
+            if(!ret){
+                //qDebug() << "VideoCaptureThread getOneFrameFromStream fail.";
+                QThread::msleep(30);
+                continue;
+            }
+
+            upLoadIfNeed(frame);
+
             int errCode = 0;
             ret = mOut->writeOneFrameToStream(frame, mIn->getCodecMediaType(), &errCode);
             if(!ret)
                 QThread::msleep(30);
         }
 
+    }
+    if(out_buffer){
+        av_free(out_buffer);
+        out_buffer = NULL;
+    }
+    if(frame){
         av_frame_free(&frame);
         frame = NULL;
     }
+
 }
+#endif
 
 void VideoCaptureThread::upLoadIfNeed(AVFrame *frame){
     static int cnt = 0, first = 1;
@@ -100,17 +141,28 @@ void VideoCaptureThread::upLoadIfNeed(AVFrame *frame){
 
 void VideoCaptureThread::upLoadJpegWithFrame(AVFrame *frame){
     AVFrame *jpgframe = NULL;
-    AVFrame *bakFrame = frame;
 
-    jpgframe = av_frame_alloc();
-    //unsigned char *out_buffer=(unsigned char *)av_malloc(avpicture_get_size(AV_PIX_FMT_YUV420P, StreamConfig::video_width_val(), StreamConfig::video_height_val()));
-    //avpicture_fill((AVPicture *)jpgframe, out_buffer, AV_PIX_FMT_YUV420P, StreamConfig::video_width_val(), StreamConfig::video_height_val());
+    jpgframe = av_frame_clone(frame);
+    //qDebug() << "buf[0]: " << (frame->buf[0] ? "true" : "false");
+    //av_frame_ref(jpgframe, frame);
+    if(jpgframe) {
+        //传数据 发信号
+        mHttpUplaodUtils.msgToList(jpgframe);
+        emit sigUploadFile();
+    }
+}
 
-    frame->buf[0] = NULL;
-    av_frame_ref(jpgframe, frame);
-    frame = bakFrame;
+bool VideoCaptureThread::frameFromList(AVFrame **frame){
+    if(!mLock || !mList || !frame)
+        return false;
 
-    //传数据 发信号
-    mHttpUplaodUtils.msgToList(jpgframe);
-    emit sigUploadFile();
+    *frame = NULL;
+    QMutexLocker lock(mLock);
+    //qDebug() << "VideoCaptureThread size: " << mList->size();
+    if(mList->isEmpty())
+        return false;
+
+    *frame = mList->front();
+    mList->pop_front();
+    return true;
 }

@@ -3,7 +3,11 @@
 AudioInputStream::AudioInputStream()
 :InputStream()
 {
-
+    mIfmt = NULL;
+    mIfmtCtx = NULL;
+    mCodecDecoder = NULL;
+    mAudioFifo = NULL;
+    deviceLock = NULL;
 }
 
 AudioInputStream::~AudioInputStream(){
@@ -13,6 +17,13 @@ AudioInputStream::~AudioInputStream(){
 bool AudioInputStream::initFifo(AVCodecContext *output_codec_context)
 {
     return initAudioFifo(output_codec_context);
+}
+
+bool AudioInputStream::destroyFifo(){
+    if(mAudioFifo){
+        av_audio_fifo_free(mAudioFifo);
+        mAudioFifo = NULL;
+    }
 }
 
 int AudioInputStream::getFifoSize()
@@ -25,7 +36,7 @@ bool AudioInputStream::addSampleToFifo(AVFrame *frame)
     int ret;
     if(frame == NULL)
         return false;
-
+    qDebug() << "addSampleToFifo: samples: " << frame->nb_samples;
     ret = av_audio_fifo_realloc(mAudioFifo, av_audio_fifo_size(mAudioFifo) + frame->nb_samples);
     if(ret < 0){
         printf("av_audio_fifo_realloc fail.\n");
@@ -79,6 +90,7 @@ bool AudioInputStream::readSampleFromFifo1(AVFrame **frame, AVCodecContext *outp
     const int frame_size = FFMIN(av_audio_fifo_size(mAudioFifo),
                                      output_codec_context->frame_size);
 
+    qDebug() << "readSampleFromFifo1: frame_size: " << frame_size;
     if (init_output_frame(frame, output_codec_context, frame_size)){
         qDebug() << "init_output_frame fail.";
         *frame = NULL;
@@ -155,7 +167,9 @@ bool AudioInputStream::openStream(){
     int sampleRate = StreamConfig::audio_sample_rate_val();//AUDIO_INPUT_SAMPLE_RATE;
     int sampleChs = StreamConfig::audio_input_channel_val();//AUDIO_INPUT_CHANNEL;
     char desc[128] = {0};
-    sprintf(desc, "audio=麦克风阵列 %s", StreamConfig::audio_desc_val().c_str());
+    QString audioDesc = QString::fromStdString(StreamConfig::audio_desc_val());
+    qDebug() << "++++++++++++ " << audioDesc;
+    sprintf(desc, "%s", audioDesc.toStdString().c_str());
     qDebug() << "desc: " << desc;
     int audioIndex = -1;
     unsigned int i = 0;
@@ -246,8 +260,10 @@ bool AudioInputStream::closeStream() {
     if(mCodecDecoder)
         delete mCodecDecoder;
 
-    if (mAudioFifo)
-            av_audio_fifo_free(mAudioFifo);
+    if (mAudioFifo) {
+        av_audio_fifo_free(mAudioFifo);
+        mAudioFifo = NULL;
+    }
 
     return true;
 }
@@ -292,4 +308,8 @@ bool AudioInputStream::getOneFrameFromStream(AVFrame *frame) {
 
 enum AVMediaType AudioInputStream::getCodecMediaType(){
     return mCodecMediaType;
+}
+
+AVFormatContext *AudioInputStream::getInputFormatCtx(){
+
 }

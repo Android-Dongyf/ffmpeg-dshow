@@ -11,7 +11,7 @@ class OutputStream : public QObject
 public:
     explicit OutputStream(QObject *parent = 0);
 
-    virtual bool init() = 0;
+    virtual bool init(bool isMater) = 0;
     virtual bool openStream() = 0;
     virtual bool closeStream() = 0;
     virtual bool writeOneFrameToStream(AVFrame *frame, enum AVMediaType codec_type, int *err_code) = 0;

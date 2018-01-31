@@ -26,33 +26,15 @@ bool Mpeg1VideoEncoder::encode(AVFrame *frame, AVPacket *pkt){
         qDebug() << "avcodec_encode_video2 fail.";
         return false;
     }
-    if(got_packet)
+    if(got_packet){
+        if (mCodecCtx->coded_frame->key_frame)
+        {
+            pkt->flags |= AV_PKT_FLAG_KEY;
+        }
         return true;
+    }
     else
         return false;
-    /* send the frame to the encoder */
-    //if (frame)
-      //  qDebug() << "Send frame: " << frame->pts;
-
-    /*ret = avcodec_send_frame(mCodecCtx, frame);
-    if (ret < 0) {
-        fprintf(stderr, "Error sending a frame for encoding\n");
-        return false;
-    }
-
-    while (ret >= 0) {
-        ret = avcodec_receive_packet(mCodecCtx, pkt);
-        if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF){
-            qDebug() << "EAGAIN 11 or AVERROR_EOF ret: " << ret;
-            return false;
-        }
-        else if (ret < 0) {
-            fprintf(stderr, "Error during encoding\n");
-            return false;
-        }
-    }
-
-    return true;*/
 }
 
 bool Mpeg1VideoEncoder::openEncoder(){
@@ -77,12 +59,20 @@ bool Mpeg1VideoEncoder::openEncoder(){
         avcodec_free_context(&mCodecCtx);
         return false;
     }
-
+    if(mCodecCtx->codec_id = AV_CODEC_ID_MPEG1VIDEO)
+        mCodecCtx->mb_decision = 2;
     /* put sample parameters */
-    mCodecCtx->bit_rate = DEFAULT_ENCODE_BITRATE;
+    mCodecCtx->bit_rate = StreamConfig::video_encode_rate_val();//DEFAULT_ENCODE_BITRATE;
+    mCodecCtx->rc_min_rate = StreamConfig::video_encode_rate_val();//DEFAULT_ENCODE_BITRATE;
+    mCodecCtx->rc_max_rate = StreamConfig::video_encode_rate_val();//DEFAULT_ENCODE_BITRATE;
+    mCodecCtx->bit_rate_tolerance = StreamConfig::video_encode_rate_val();//DEFAULT_ENCODE_BITRATE;
+    mCodecCtx->rc_buffer_size = StreamConfig::video_encode_rate_val();//DEFAULT_ENCODE_BITRATE;
+    mCodecCtx->rc_initial_buffer_occupancy = mCodecCtx->rc_buffer_size*3/4;
+   // mCodecCtx->rc_buffer_aggressivity= (float)1.0;
+    //mCodecCtx->rc_initial_cplx= 0.5;
     /* resolution must be a multiple of two */
-    mCodecCtx->width = StreamConfig::video_width_val();//DEFAULT_ENCODE_WIDTH;
-    mCodecCtx->height = StreamConfig::video_height_val();//DEFAULT_ENCODE_HEIGHT;
+    mCodecCtx->width = StreamConfig::video_encode_width_val();//DEFAULT_ENCODE_WIDTH;
+    mCodecCtx->height = StreamConfig::video_encode_height_val();//DEFAULT_ENCODE_HEIGHT;
     /* frames per second */
     AVRational timeBase = {1, atoi(StreamConfig::video_framerate_val().c_str())};
     mCodecCtx->time_base = timeBase;
@@ -95,10 +85,17 @@ bool Mpeg1VideoEncoder::openEncoder(){
     * then gop_size is ignored and the output of encoder
     * will always be I frame irrespective to gop_size
     */
-    mCodecCtx->gop_size = 10;
+    mCodecCtx->gop_size = 30;
     mCodecCtx->max_b_frames = 1;
+    mCodecCtx->keyint_min = 15;
     mCodecCtx->pix_fmt = DEFAULT_ENCODE_FORMAT;
-
+    //mCodecCtx->lumi_masking = 0;
+    //mCodecCtx->dark_masking = 0;
+    //mCodecCtx->dct_algo = 1;
+    mCodecCtx->me_range = 0;
+    mCodecCtx->qcompress = 0;
+    //mCodecCtx->thread_count = 5;
+    mCodecCtx->refs = 5;
 
     ret = avcodec_open2(mCodecCtx, mCodec, NULL);
     if (ret < 0) {

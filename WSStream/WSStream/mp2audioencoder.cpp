@@ -2,7 +2,9 @@
 
 Mp2AudioEncoder::Mp2AudioEncoder()
 {
-
+    mCodec = NULL;
+    mCodecCtx = NULL;
+    mSwrAudioCtx = NULL;
 }
 
 Mp2AudioEncoder::~Mp2AudioEncoder(){
@@ -167,9 +169,12 @@ bool Mp2AudioEncoder::openEncoder(){
 }
 
 bool Mp2AudioEncoder::closeEncoder(){
-    avcodec_close(mCodecCtx);
-    avcodec_free_context(&mCodecCtx);
-    swr_free(&mSwrAudioCtx);
+    if(mCodecCtx)
+        avcodec_close(mCodecCtx);
+    if(mCodecCtx)
+        avcodec_free_context(&mCodecCtx);
+    if(mSwrAudioCtx)
+        swr_free(&mSwrAudioCtx);
 
     return true;
 }
